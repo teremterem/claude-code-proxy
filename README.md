@@ -12,7 +12,7 @@ A proxy server that lets you use Anthropic clients with Gemini or OpenAI models 
 ### Prerequisites
 
 - OpenAI API key 🔑
-- Google AI Studio (Gemini) API key (if using default provider) 🔑
+- Google AI Studio (Gemini) API key (if using Google provider) 🔑
 - [uv](https://github.com/astral-sh/uv) installed.
 
 ### Setup 🛠️
@@ -37,15 +37,15 @@ A proxy server that lets you use Anthropic clients with Gemini or OpenAI models 
    Edit `.env` and fill in your API keys and model configurations:
 
    *   `ANTHROPIC_API_KEY`: (Optional) Needed only if proxying *to* Anthropic models.
-   *   `OPENAI_API_KEY`: Your OpenAI API key (Required if using OpenAI models as fallback or primary).
-   *   `GEMINI_API_KEY`: Your Google AI Studio (Gemini) API key (Required if using the default Gemini preference).
-   *   `PREFERRED_PROVIDER` (Optional): Set to `google` (default) or `openai`. This determines the primary backend for mapping `haiku`/`sonnet`.
-   *   `BIG_MODEL` (Optional): The model to map `sonnet` requests to. Defaults to `gemini-2.5-pro-preview-03-25` (if `PREFERRED_PROVIDER=google` and model is known) or `gpt-4o`.
-   *   `SMALL_MODEL` (Optional): The model to map `haiku` requests to. Defaults to `gemini-2.0-flash` (if `PREFERRED_PROVIDER=google` and model is known) or `gpt-4o-mini`.
+   *   `OPENAI_API_KEY`: Your OpenAI API key (Required if using the default OpenAI preference or as fallback).
+   *   `GEMINI_API_KEY`: Your Google AI Studio (Gemini) API key (Required if PREFERRED_PROVIDER=google).
+   *   `PREFERRED_PROVIDER` (Optional): Set to `openai` (default) or `google`. This determines the primary backend for mapping `haiku`/`sonnet`.
+   *   `BIG_MODEL` (Optional): The model to map `sonnet` requests to. Defaults to `gpt-4.1` (if `PREFERRED_PROVIDER=openai`) or `gemini-2.5-pro-preview-03-25`.
+   *   `SMALL_MODEL` (Optional): The model to map `haiku` requests to. Defaults to `gpt-4.1-mini` (if `PREFERRED_PROVIDER=openai`) or `gemini-2.0-flash`.
 
    **Mapping Logic:**
-   - If `PREFERRED_PROVIDER=google` (default), `haiku`/`sonnet` map to `SMALL_MODEL`/`BIG_MODEL` prefixed with `gemini/` *if* those models are in the server's known `GEMINI_MODELS` list.
-   - Otherwise (if `PREFERRED_PROVIDER=openai` or the specified Google model isn't known), they map to `SMALL_MODEL`/`BIG_MODEL` prefixed with `openai/`.
+   - If `PREFERRED_PROVIDER=openai` (default), `haiku`/`sonnet` map to `SMALL_MODEL`/`BIG_MODEL` prefixed with `openai/`.
+   - If `PREFERRED_PROVIDER=google`, `haiku`/`sonnet` map to `SMALL_MODEL`/`BIG_MODEL` prefixed with `gemini/` *if* those models are in the server's known `GEMINI_MODELS` list (otherwise falls back to OpenAI mapping).
 
 4. **Run the server**:
    ```bash
@@ -90,6 +90,8 @@ The following OpenAI models are supported with automatic `openai/` prefix handli
 - chatgpt-4o-latest
 - gpt-4o-mini
 - gpt-4o-mini-audio-preview
+- gpt-4.1
+- gpt-4.1-mini
 
 #### Gemini Models
 The following Gemini models are supported with automatic `gemini/` prefix handling:
@@ -109,33 +111,34 @@ For example:
 
 ### Customizing Model Mapping
 
-You can customize which models are used via environment variables:
+Control the mapping using environment variables in your `.env` file or directly:
 
-- `BIG_MODEL`: The model to use for Claude Sonnet models (default: "gpt-4o")
-- `SMALL_MODEL`: The model to use for Claude Haiku models (default: "gpt-4o-mini")
-
-Add these to your `.env` file to customize:
-```
-OPENAI_API_KEY=your-openai-key
-# For OpenAI models (default)
-BIG_MODEL=gpt-4o
-SMALL_MODEL=gpt-4o-mini
-
-# For Gemini models
-# BIG_MODEL=gemini-2.5-pro-preview-03-25
-# SMALL_MODEL=gemini-2.0-flash
+**Example 1: Default (Use OpenAI)**
+No changes needed in `.env` beyond API keys, or ensure:
+```dotenv
+OPENAI_API_KEY="your-openai-key"
+GEMINI_API_KEY="your-google-key" # Needed if PREFERRED_PROVIDER=google
+# PREFERRED_PROVIDER="openai" # Optional, it's the default
+# BIG_MODEL="gpt-4.1" # Optional, it's the default
+# SMALL_MODEL="gpt-4.1-mini" # Optional, it's the default
 ```
 
-Or set them directly when running the server:
-```bash
-# Using OpenAI models (with uv)
-BIG_MODEL=gpt-4o SMALL_MODEL=gpt-4o-mini uv run uvicorn server:app --host 0.0.0.0 --port 8082
+**Example 2: Prefer Google**
+```dotenv
+GEMINI_API_KEY="your-google-key"
+OPENAI_API_KEY="your-openai-key" # Needed for fallback
+PREFERRED_PROVIDER="google"
+# BIG_MODEL="gemini-2.5-pro-preview-03-25" # Optional, it's the default for Google pref
+# SMALL_MODEL="gemini-2.0-flash" # Optional, it's the default for Google pref
+```
 
-# Using Gemini models (with uv)
-BIG_MODEL=gemini-2.5-pro-preview-03-25 SMALL_MODEL=gemini-2.0-flash uv run uvicorn server:app --host 0.0.0.0 --port 8082
-
-# Mix and match (with uv)
-BIG_MODEL=gemini-2.5-pro-preview-03-25 SMALL_MODEL=gpt-4o-mini uv run uvicorn server:app --host 0.0.0.0 --port 8082
+**Example 3: Use Specific OpenAI Models**
+```dotenv
+OPENAI_API_KEY="your-openai-key"
+GEMINI_API_KEY="your-google-key"
+PREFERRED_PROVIDER="openai"
+BIG_MODEL="gpt-4o" # Example specific model
+SMALL_MODEL="gpt-4o-mini" # Example specific model
 ```
 
 ## How It Works 🧩
