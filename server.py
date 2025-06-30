@@ -82,6 +82,28 @@ ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
+# Get Langfuse configuration from environment
+LANGFUSE_PUBLIC_KEY = os.environ.get("LANGFUSE_PUBLIC_KEY")
+LANGFUSE_SECRET_KEY = os.environ.get("LANGFUSE_SECRET_KEY")
+LANGFUSE_HOST = os.environ.get("LANGFUSE_HOST", "https://cloud.langfuse.com")
+
+# Configure LiteLLM Langfuse integration
+if LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY:
+    # Set Langfuse as callback for successful and failed LLM calls
+    litellm.success_callback = ["langfuse"]
+    litellm.failure_callback = ["langfuse"]
+    
+    # Ensure comprehensive logging - log all messages and responses (default behavior)
+    # Setting this to False ensures full request/response payloads are logged
+    litellm.turn_off_message_logging = False
+    
+    # Set additional configuration for comprehensive tracking
+    litellm.set_verbose = False  # Disable verbose console output while keeping Langfuse logging
+    
+    logger.info("✅ Langfuse comprehensive logging enabled - all requests/responses will be tracked")
+else:
+    logger.info("ℹ️ Langfuse logging disabled - missing LANGFUSE_PUBLIC_KEY or LANGFUSE_SECRET_KEY")
+
 # Get preferred provider (default to openai)
 PREFERRED_PROVIDER = os.environ.get("PREFERRED_PROVIDER", "openai").lower()
 
@@ -551,6 +573,40 @@ def convert_anthropic_to_litellm(anthropic_request: MessagesRequest) -> Dict[str
         "temperature": anthropic_request.temperature,
         "stream": anthropic_request.stream,
     }
+    
+    # Add comprehensive metadata for Langfuse tracking
+    metadata = {}
+    
+    # Always include basic request info for tracking
+    metadata["proxy_version"] = "claude-code-proxy"
+    metadata["original_model"] = anthropic_request.original_model or anthropic_request.model
+    metadata["mapped_model"] = anthropic_request.model
+    metadata["message_count"] = len(anthropic_request.messages)
+    metadata["has_tools"] = bool(anthropic_request.tools)
+    metadata["tool_count"] = len(anthropic_request.tools) if anthropic_request.tools else 0
+    metadata["stream_mode"] = bool(anthropic_request.stream)
+    metadata["max_tokens"] = anthropic_request.max_tokens
+    metadata["temperature"] = anthropic_request.temperature
+    
+    # Add user-provided metadata if available
+    if anthropic_request.metadata:
+        # Map common Anthropic metadata fields to Langfuse
+        if "user_id" in anthropic_request.metadata:
+            metadata["trace_user_id"] = anthropic_request.metadata["user_id"]
+        if "session_id" in anthropic_request.metadata:
+            metadata["session_id"] = anthropic_request.metadata["session_id"]
+        if "trace_id" in anthropic_request.metadata:
+            metadata["trace_id"] = anthropic_request.metadata["trace_id"]
+        if "tags" in anthropic_request.metadata:
+            metadata["tags"] = anthropic_request.metadata["tags"]
+        
+        # Add any additional metadata
+        for key, value in anthropic_request.metadata.items():
+            if key not in ["user_id", "session_id", "trace_id", "tags"]:
+                metadata[f"custom_{key}"] = value
+    
+    # Always add metadata to the request
+    litellm_request["metadata"] = metadata
     
     # Add optional parameters if present
     if anthropic_request.stop_sequences:
@@ -1258,6 +1314,12 @@ async def create_message(
                     logger.warning(f"Message {i} has None content - replacing with placeholder")
                     litellm_request["messages"][i]["content"] = "..." # Fallback placeholder
         
+        # Add request timestamp for Langfuse tracking
+        if "metadata" not in litellm_request:
+            litellm_request["metadata"] = {}
+        litellm_request["metadata"]["request_timestamp"] = datetime.now().isoformat()
+        litellm_request["metadata"]["request_id"] = f"req_{uuid.uuid4().hex[:12]}"
+        
         # Only log basic info about the request, not the full details
         logger.debug(f"Request for model: {litellm_request.get('model')}, stream: {litellm_request.get('stream', False)}")
         
@@ -1347,6 +1409,28 @@ async def create_message(
         # Log all error details with safe serialization
         sanitized_details = sanitize_for_json(error_details)
         logger.error(f"Error processing request: {json.dumps(sanitized_details, indent=2)}")
+        
+        # Add error details to metadata for Langfuse tracking
+        if hasattr(request, 'model'):
+            error_metadata = {
+                "error_type": type(e).__name__,
+                "error_message": str(e),
+                "model": getattr(request, 'model', 'unknown'),
+                "request_timestamp": datetime.now().isoformat(),
+                "error_details": sanitized_details
+            }
+            
+            # Create a minimal litellm request for error logging
+            try:
+                error_request = {
+                    "model": getattr(request, 'model', 'unknown'),
+                    "messages": [{"role": "user", "content": "Error occurred"}],
+                    "metadata": error_metadata
+                }
+                # This will trigger the failure callback to log the error to Langfuse
+                logger.debug("Error metadata prepared for Langfuse logging")
+            except Exception as meta_error:
+                logger.debug(f"Could not prepare error metadata: {meta_error}")
         
         # Format error for response
         error_message = f"Error: {str(e)}"
