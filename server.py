@@ -1328,7 +1328,7 @@ async def create_message(
         
         # Helper function to safely serialize objects for JSON
         def sanitize_for_json(obj):
-            """递归地清理对象使其可以JSON序列化"""
+            """Recursively clean objects to make them JSON serializable"""
             if isinstance(obj, dict):
                 return {k: sanitize_for_json(v) for k, v in obj.items()}
             elif isinstance(obj, list):
