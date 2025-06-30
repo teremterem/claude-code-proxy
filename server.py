@@ -205,8 +205,13 @@ class MessagesRequest(BaseModel):
 
         # --- Mapping Logic --- START ---
         mapped = False
+        if PREFERRED_PROVIDER == "anthropic":
+            # Don't remap to big/small models, just add the prefix
+            new_model = f"anthropic/{clean_v}"
+            mapped = True
+
         # Map Haiku to SMALL_MODEL based on provider preference
-        if 'haiku' in clean_v.lower():
+        elif 'haiku' in clean_v.lower():
             if PREFERRED_PROVIDER == "google" and SMALL_MODEL in GEMINI_MODELS:
                 new_model = f"gemini/{SMALL_MODEL}"
                 mapped = True

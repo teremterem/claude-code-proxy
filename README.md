@@ -1,8 +1,8 @@
 # Anthropic API Proxy for Gemini & OpenAI Models 🔄
 
-**Use Anthropic clients (like Claude Code) with Gemini or OpenAI backends.** 🤝
+**Use Anthropic clients (like Claude Code) with Gemini, OpenAI, or direct Anthropic backends.** 🤝
 
-A proxy server that lets you use Anthropic clients with Gemini or OpenAI models via LiteLLM. 🌉
+A proxy server that lets you use Anthropic clients with Gemini, OpenAI, or Anthropic models themselves (a transparent proxy of sorts), all via LiteLLM. 🌉
 
 
 ![Anthropic API Proxy](pic.png)
@@ -39,13 +39,14 @@ A proxy server that lets you use Anthropic clients with Gemini or OpenAI models 
    *   `ANTHROPIC_API_KEY`: (Optional) Needed only if proxying *to* Anthropic models.
    *   `OPENAI_API_KEY`: Your OpenAI API key (Required if using the default OpenAI preference or as fallback).
    *   `GEMINI_API_KEY`: Your Google AI Studio (Gemini) API key (Required if PREFERRED_PROVIDER=google).
-   *   `PREFERRED_PROVIDER` (Optional): Set to `openai` (default) or `google`. This determines the primary backend for mapping `haiku`/`sonnet`.
-   *   `BIG_MODEL` (Optional): The model to map `sonnet` requests to. Defaults to `gpt-4.1` (if `PREFERRED_PROVIDER=openai`) or `gemini-2.5-pro-preview-03-25`.
-   *   `SMALL_MODEL` (Optional): The model to map `haiku` requests to. Defaults to `gpt-4.1-mini` (if `PREFERRED_PROVIDER=openai`) or `gemini-2.0-flash`.
+   *   `PREFERRED_PROVIDER` (Optional): Set to `openai` (default), `google`, or `anthropic`. This determines the primary backend for mapping `haiku`/`sonnet`.
+   *   `BIG_MODEL` (Optional): The model to map `sonnet` requests to. Defaults to `gpt-4.1` (if `PREFERRED_PROVIDER=openai`) or `gemini-2.5-pro-preview-03-25`. Ignored when `PREFERRED_PROVIDER=anthropic`.
+   *   `SMALL_MODEL` (Optional): The model to map `haiku` requests to. Defaults to `gpt-4.1-mini` (if `PREFERRED_PROVIDER=openai`) or `gemini-2.0-flash`. Ignored when `PREFERRED_PROVIDER=anthropic`.
 
    **Mapping Logic:**
    - If `PREFERRED_PROVIDER=openai` (default), `haiku`/`sonnet` map to `SMALL_MODEL`/`BIG_MODEL` prefixed with `openai/`.
    - If `PREFERRED_PROVIDER=google`, `haiku`/`sonnet` map to `SMALL_MODEL`/`BIG_MODEL` prefixed with `gemini/` *if* those models are in the server's known `GEMINI_MODELS` list (otherwise falls back to OpenAI mapping).
+   - If `PREFERRED_PROVIDER=anthropic`, `haiku`/`sonnet` requests are passed directly to Anthropic with the `anthropic/` prefix without remapping to different models.
 
 4. **Run the server**:
    ```bash
@@ -132,7 +133,17 @@ PREFERRED_PROVIDER="google"
 # SMALL_MODEL="gemini-2.0-flash" # Optional, it's the default for Google pref
 ```
 
-**Example 3: Use Specific OpenAI Models**
+**Example 3: Use Direct Anthropic ("Just an Anthropic Proxy" Mode)**
+```dotenv
+ANTHROPIC_API_KEY="sk-ant-..."
+PREFERRED_PROVIDER="anthropic"
+# BIG_MODEL and SMALL_MODEL are ignored in this mode
+# haiku/sonnet requests are passed directly to Anthropic models
+```
+
+*Use case: This mode enables you to use the proxy infrastructure (for logging, middleware, request/response processing, etc.) while still using actual Anthropic models rather than being forced to remap to OpenAI or Gemini.*
+
+**Example 4: Use Specific OpenAI Models**
 ```dotenv
 OPENAI_API_KEY="your-openai-key"
 GEMINI_API_KEY="your-google-key"
