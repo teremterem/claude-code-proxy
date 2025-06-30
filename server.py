@@ -109,7 +109,8 @@ OPENAI_MODELS = [
 # List of Gemini models
 GEMINI_MODELS = [
     "gemini-2.5-pro-preview-03-25",
-    "gemini-2.0-flash"
+    "gemini-2.5-flash",
+    "gemini-2.5-pro"
 ]
 
 # Helper function to clean schema for Gemini
@@ -1325,8 +1326,27 @@ async def create_message(
                 if key not in error_details and key not in ['args', '__traceback__']:
                     error_details[key] = str(value)
         
-        # Log all error details
-        logger.error(f"Error processing request: {json.dumps(error_details, indent=2)}")
+        # Helper function to safely serialize objects for JSON
+        def sanitize_for_json(obj):
+            """递归地清理对象使其可以JSON序列化"""
+            if isinstance(obj, dict):
+                return {k: sanitize_for_json(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [sanitize_for_json(item) for item in obj]
+            elif hasattr(obj, '__dict__'):
+                return sanitize_for_json(obj.__dict__)
+            elif hasattr(obj, 'text'):
+                return str(obj.text)
+            else:
+                try:
+                    json.dumps(obj)
+                    return obj
+                except (TypeError, ValueError):
+                    return str(obj)
+        
+        # Log all error details with safe serialization
+        sanitized_details = sanitize_for_json(error_details)
+        logger.error(f"Error processing request: {json.dumps(sanitized_details, indent=2)}")
         
         # Format error for response
         error_message = f"Error: {str(e)}"
