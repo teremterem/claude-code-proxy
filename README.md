@@ -141,6 +141,8 @@ PREFERRED_PROVIDER="anthropic"
 # haiku/sonnet requests are passed directly to Anthropic models
 ```
 
+*Use case: This mode enables you to use the proxy infrastructure (for logging, middleware, request/response processing, etc.) while still using actual Anthropic models rather than being forced to remap to OpenAI or Gemini.*
+
 **Example 4: Use Specific OpenAI Models**
 ```dotenv
 OPENAI_API_KEY="your-openai-key"
