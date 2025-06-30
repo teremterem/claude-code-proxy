@@ -12,9 +12,17 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from langfuse import Langfuse
 
 # Load environment variables from .env file
 load_dotenv()
+
+# Initialize Langfuse client
+langfuse = Langfuse(
+    secret_key=os.environ.get("LANGFUSE_SECRET_KEY"),
+    public_key=os.environ.get("LANGFUSE_PUBLIC_KEY"),
+    host=os.environ.get("LANGFUSE_HOST", "https://cloud.langfuse.com"),
+)
 
 # Configure logging
 logging.basicConfig(
@@ -197,8 +205,29 @@ def parse_tool_result_content(content):
         return "Unparseable content"
 
 
-def convert_anthropic_to_litellm(anthropic_request: MessagesRequest) -> Dict[str, Any]:
+def convert_anthropic_to_litellm(anthropic_request: MessagesRequest, trace_id: str = None) -> Dict[str, Any]:
     """Convert Anthropic API request format to LiteLLM format (which follows OpenAI)."""
+    # Create Langfuse span for conversion
+    span = None
+    if trace_id:
+        try:
+            span = langfuse.span(
+                trace_id=trace_id,
+                name="convert_anthropic_to_litellm",
+                input={
+                    "model": anthropic_request.model,
+                    "max_tokens": anthropic_request.max_tokens,
+                    "temperature": anthropic_request.temperature,
+                    "stream": anthropic_request.stream,
+                    "messages_count": len(anthropic_request.messages),
+                    "tools_count": len(anthropic_request.tools) if anthropic_request.tools else 0,
+                    "system_present": bool(anthropic_request.system),
+                    "full_request": anthropic_request.dict()
+                }
+            )
+        except Exception as e:
+            logger.warning(f"Failed to create Langfuse span for conversion: {e}")
+    
     # LiteLLM already handles Anthropic models when using the format model="anthropic/claude-3-opus-20240229"
     # So we just need to convert our Pydantic model to a dict in the expected format
 
@@ -439,13 +468,45 @@ def convert_anthropic_to_litellm(anthropic_request: MessagesRequest) -> Dict[str
             # Default to auto if we can't determine
             litellm_request["tool_choice"] = "auto"
 
+    # Log conversion output to Langfuse
+    if span:
+        try:
+            span.update(
+                output={
+                    "converted_request": litellm_request,
+                    "messages_converted": len(litellm_request.get("messages", [])),
+                    "tools_converted": len(litellm_request.get("tools", [])),
+                    "conversion_successful": True
+                }
+            )
+            span.end()
+        except Exception as e:
+            logger.warning(f"Failed to update Langfuse span for conversion: {e}")
+    
     return litellm_request
 
 
 def convert_litellm_to_anthropic(
-    litellm_response: Union[Dict[str, Any], Any], original_request: MessagesRequest
+    litellm_response: Union[Dict[str, Any], Any], original_request: MessagesRequest, trace_id: str = None
 ) -> MessagesResponse:
     """Convert LiteLLM (OpenAI format) response to Anthropic API response format."""
+    # Create Langfuse span for response conversion
+    span = None
+    if trace_id:
+        try:
+            span = langfuse.span(
+                trace_id=trace_id,
+                name="convert_litellm_to_anthropic",
+                input={
+                    "original_model": original_request.model,
+                    "response_type": type(litellm_response).__name__,
+                    "has_choices": hasattr(litellm_response, "choices"),
+                    "has_usage": hasattr(litellm_response, "usage"),
+                    "full_litellm_response": str(litellm_response) if hasattr(litellm_response, "__dict__") else litellm_response
+                }
+            )
+        except Exception as e:
+            logger.warning(f"Failed to create Langfuse span for response conversion: {e}")
 
     # Enhanced response extraction with better error handling
     try:
@@ -596,13 +657,45 @@ def convert_litellm_to_anthropic(
             usage=Usage(input_tokens=prompt_tokens, output_tokens=completion_tokens),
         )
 
+        # Log successful conversion to Langfuse
+        if span:
+            try:
+                span.update(
+                    output={
+                        "anthropic_response": anthropic_response.dict(),
+                        "response_id": anthropic_response.id,
+                        "content_blocks_count": len(anthropic_response.content),
+                        "stop_reason": anthropic_response.stop_reason,
+                        "input_tokens": anthropic_response.usage.input_tokens,
+                        "output_tokens": anthropic_response.usage.output_tokens,
+                        "conversion_successful": True
+                    }
+                )
+                span.end()
+            except Exception as e:
+                logger.warning(f"Failed to update Langfuse span for response conversion: {e}")
+        
         return anthropic_response
 
     except Exception as e:
         logger.exception("Error converting response")
+        
+        # Log conversion error to Langfuse
+        if span:
+            try:
+                span.update(
+                    output={
+                        "error": str(e),
+                        "conversion_successful": False,
+                        "fallback_response_created": True
+                    }
+                )
+                span.end()
+            except Exception as langfuse_error:
+                logger.warning(f"Failed to update Langfuse span for conversion error: {langfuse_error}")
 
         # In case of any error, create a fallback response
-        return MessagesResponse(
+        fallback_response = MessagesResponse(
             id=f"msg_{uuid.uuid4()}",
             model=original_request.model,
             role="assistant",
@@ -615,6 +708,8 @@ def convert_litellm_to_anthropic(
             stop_reason="end_turn",
             usage=Usage(input_tokens=0, output_tokens=0),
         )
+        
+        return fallback_response
 
 
 async def handle_streaming(response_generator, original_request: MessagesRequest):
@@ -915,9 +1010,36 @@ async def create_message(request: MessagesRequest, raw_request: Request):
     logger.debug(
         "📊 PROCESSING REQUEST: Model=%s, Stream=%s", request.model, request.stream
     )
+    
+    # Create Langfuse trace for the entire request
+    trace_id = None
+    trace = None
+    try:
+        trace = langfuse.trace(
+            name="anthropic_proxy_request",
+            input={
+                "raw_request": body_json,
+                "model": request.model,
+                "stream": request.stream,
+                "max_tokens": request.max_tokens,
+                "temperature": request.temperature,
+                "messages_count": len(request.messages),
+                "tools_count": len(request.tools) if request.tools else 0,
+                "system_present": bool(request.system)
+            },
+            metadata={
+                "endpoint": "/v1/messages",
+                "method": "POST",
+                "user_agent": raw_request.headers.get("user-agent"),
+                "content_type": raw_request.headers.get("content-type")
+            }
+        )
+        trace_id = trace.id
+    except Exception as e:
+        logger.warning(f"Failed to create Langfuse trace: {e}")
 
     # Convert Anthropic request to LiteLLM format
-    litellm_request = convert_anthropic_to_litellm(request)
+    litellm_request = convert_anthropic_to_litellm(request, trace_id)
 
     litellm_request["api_key"] = ANTHROPIC_API_KEY
     logger.debug("Using Anthropic API key for model: %s", request.model)
@@ -970,7 +1092,23 @@ async def create_message(request: MessagesRequest, raw_request: Request):
         )
 
         # Convert LiteLLM response to Anthropic format
-        anthropic_response = convert_litellm_to_anthropic(litellm_response, request)
+        anthropic_response = convert_litellm_to_anthropic(litellm_response, request, trace_id)
+        
+        # Update Langfuse trace with final response
+        if trace:
+            try:
+                trace.update(
+                    output={
+                        "anthropic_response": anthropic_response.dict(),
+                        "response_id": anthropic_response.id,
+                        "stop_reason": anthropic_response.stop_reason,
+                        "usage": anthropic_response.usage.dict(),
+                        "content_blocks": len(anthropic_response.content),
+                        "processing_time_seconds": time.time() - start_time
+                    }
+                )
+            except Exception as e:
+                logger.warning(f"Failed to update Langfuse trace with response: {e}")
 
         return anthropic_response
 
