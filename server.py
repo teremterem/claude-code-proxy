@@ -348,13 +348,125 @@ class MessagesResponse(BaseModel):
 async def log_requests(request: Request, call_next):
     # Get request details
     method = request.method
-    path = request.url.path
+    url = str(request.url)
+    headers = dict(request.headers)
     
-    # Log only basic request details at debug level
-    logger.debug(f"Request: {method} {path}")
+    # Read request body
+    body = await request.body()
+    request_payload = None
+    if body:
+        try:
+            request_payload = json.loads(body.decode('utf-8'))
+        except:
+            request_payload = body.decode('utf-8', errors='ignore')
+    
+    # Create a new request with the body for downstream processing
+    async def receive():
+        return {"type": "http.request", "body": body}
+    
+    # Replace the request's receive method so the body can be read again
+    request._receive = receive
+    
+    # Pretty print complete request
+    print(f"\n{Colors.BOLD}{Colors.CYAN}📥 INCOMING REQUEST{Colors.RESET}")
+    print(f"{Colors.BOLD}Method:{Colors.RESET} {method}")
+    print(f"{Colors.BOLD}URL:{Colors.RESET} {url}")
+    print(f"{Colors.BOLD}Headers:{Colors.RESET}")
+    for key, value in headers.items():
+        # Mask sensitive headers
+        if key.lower() in ['authorization', 'x-api-key', 'api-key']:
+            value = f"{value[:10]}..." if len(value) > 10 else "***"
+        print(f"  {key}: {value}")
+    
+    if request_payload:
+        print(f"{Colors.BOLD}Payload:{Colors.RESET}")
+        if isinstance(request_payload, dict):
+            print(json.dumps(request_payload, indent=2))
+        else:
+            print(request_payload)
     
     # Process the request and get the response
+    start_time = time.time()
     response = await call_next(request)
+    duration = time.time() - start_time
+    
+    # Get response details
+    response_headers = dict(response.headers)
+    
+    # For capturing response body, we need to handle different response types
+    response_body = None
+    is_streaming = response.headers.get('content-type', '').startswith('text/event-stream')
+    
+    if hasattr(response, 'body_iterator'):
+        # Capture response body for both streaming and non-streaming responses
+        try:
+            body_parts = []
+            
+            if is_streaming:
+                print(f"{Colors.BOLD}Stream Body:{Colors.RESET}")
+                print(f"{Colors.DIM}--- Starting stream capture ---{Colors.RESET}")
+                
+            async for chunk in response.body_iterator:
+                body_parts.append(chunk)
+                
+                if is_streaming:
+                    # Print each streaming chunk in real-time
+                    chunk_text = chunk.decode('utf-8', errors='ignore') if isinstance(chunk, bytes) else str(chunk)
+                    if chunk_text.strip():  # Only print non-empty chunks
+                        print(f"{Colors.YELLOW}📡 STREAM CHUNK:{Colors.RESET} {chunk_text}")
+            
+            if is_streaming:
+                print(f"{Colors.DIM}--- End of stream ---{Colors.RESET}")
+            
+            response_body = b''.join(body_parts).decode('utf-8', errors='ignore')
+            
+            # Create a new response with the captured body
+            from fastapi.responses import Response
+            if is_streaming:
+                from fastapi.responses import StreamingResponse
+                async def stream_generator():
+                    for chunk in body_parts:
+                        yield chunk
+                response = StreamingResponse(
+                    stream_generator(),
+                    status_code=response.status_code,
+                    headers=dict(response.headers),
+                    media_type=response.media_type
+                )
+            else:
+                response = Response(
+                    content=response_body,
+                    status_code=response.status_code,
+                    headers=dict(response.headers),
+                    media_type=response.media_type
+                )
+        except Exception as e:
+            response_body = f"Error capturing response body: {str(e)}"
+    
+    # Pretty print complete response
+    print(f"\n{Colors.BOLD}{Colors.GREEN}📤 OUTGOING RESPONSE{Colors.RESET}")
+    print(f"{Colors.BOLD}Status:{Colors.RESET} {response.status_code}")
+    print(f"{Colors.BOLD}Duration:{Colors.RESET} {duration:.3f}s")
+    print(f"{Colors.BOLD}Headers:{Colors.RESET}")
+    for key, value in response_headers.items():
+        print(f"  {key}: {value}")
+    
+    if response_body and not is_streaming:
+        print(f"{Colors.BOLD}Body:{Colors.RESET}")
+        try:
+            # Try to parse as JSON for pretty printing
+            body_json = json.loads(response_body)
+            print(json.dumps(body_json, indent=2))
+        except:
+            # If not JSON, print as-is (truncate if too long)
+            if len(response_body) > 2000:
+                print(f"{response_body[:2000]}... (truncated)")
+            else:
+                print(response_body)
+    elif is_streaming:
+        print(f"{Colors.BOLD}Body:{Colors.RESET} [Streaming response - body not captured]")
+    
+    print(f"{Colors.DIM}{'='*60}{Colors.RESET}\n")
     
     return response
 
