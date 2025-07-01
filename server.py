@@ -13,6 +13,16 @@ from fastapi import FastAPI, Request
 # Load environment variables from .env file
 load_dotenv()
 
+# Configure LiteLLM logging with Langfuse
+litellm.success_callback = ["langfuse"]
+litellm.failure_callback = ["langfuse"]
+
+# Set Langfuse environment variables (will be read from .env if present)
+LANGFUSE_PUBLIC_KEY = os.environ.get("LANGFUSE_PUBLIC_KEY")
+LANGFUSE_SECRET_KEY = os.environ.get("LANGFUSE_SECRET_KEY")
+LANGFUSE_HOST = os.environ.get("LANGFUSE_HOST", "https://cloud.langfuse.com")
+
+
 # Configure logging
 logging.basicConfig(
     level=logging.WARN,  # Change to INFO level to show more details
@@ -47,9 +57,7 @@ class ColorizedFormatter(logging.Formatter):
 # Apply custom formatter to console handler
 for handler in logger.handlers:
     if isinstance(handler, logging.StreamHandler):
-        handler.setFormatter(
-            ColorizedFormatter("%(asctime)s - %(levelname)s - %(message)s")
-        )
+        handler.setFormatter(ColorizedFormatter("%(asctime)s - %(levelname)s - %(message)s"))
 
 app = FastAPI()
 
@@ -91,6 +99,10 @@ async def create_message(request: dict[str, Any], raw_request: Request) -> Any:
         num_tools,
         200,  # Assuming success at this point
     )
+
+    metadata = request.setdefault("metadata", {})
+    # Copy all request fields (except messages) to metadata for Langfuse logging
+    metadata["trace_metadata"] = {k: v for k, v in request.items() if k not in ["messages", "metadata"]}
 
     # Use LiteLLM's native Anthropic format support
     response = await litellm.anthropic.messages.acreate(**request)

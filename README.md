@@ -1,8 +1,8 @@
 # Anthropic API Proxy 🔄
 
-**A simple proxy server for Anthropic API using LiteLLM.** 🤝
+**A simple proxy server for Anthropic API using LiteLLM with Langfuse logging.** 🤝
 
-A proxy server that accepts Anthropic API requests and forwards them through LiteLLM. 🌉
+A proxy server that accepts Anthropic API requests, forwards them through LiteLLM, and logs all interactions to Langfuse for observability and analytics. 🌉
 
 
 ![Anthropic API Proxy](pic.png)
@@ -12,6 +12,7 @@ A proxy server that accepts Anthropic API requests and forwards them through Lit
 ### Prerequisites
 
 - Anthropic API key 🔑
+- Langfuse account and API keys (for logging) 📊
 - [uv](https://github.com/astral-sh/uv) installed.
 
 ### Setup 🛠️
@@ -33,9 +34,12 @@ A proxy server that accepts Anthropic API requests and forwards them through Lit
    ```bash
    touch .env
    ```
-   Edit `.env` and add your Anthropic API key:
+   Edit `.env` and add your API keys:
    ```dotenv
    ANTHROPIC_API_KEY=your-anthropic-api-key-here
+   LANGFUSE_PUBLIC_KEY=your-langfuse-public-key
+   LANGFUSE_SECRET_KEY=your-langfuse-secret-key
+   LANGFUSE_HOST=https://cloud.langfuse.com
    ```
 
 4. **Run the server**:
@@ -73,10 +77,22 @@ This proxy works by:
 1. **Receiving requests** in Anthropic's API format 📥
 2. **Converting** the requests to LiteLLM format 🔄
 3. **Sending** the request to Anthropic via LiteLLM 📤
-4. **Converting** the response back to Anthropic format 🔄
-5. **Returning** the formatted response to the client ✅
+4. **Logging** all interactions to Langfuse for observability 📊
+5. **Converting** the response back to Anthropic format 🔄
+6. **Returning** the formatted response to the client ✅
 
-The proxy handles both streaming and non-streaming responses, maintaining compatibility with all Claude clients. 🌊
+The proxy handles both streaming and non-streaming responses, maintaining compatibility with all Claude clients while providing comprehensive logging and analytics through Langfuse. 🌊
+
+## Langfuse Integration 📊
+
+All API interactions are automatically logged to Langfuse, providing:
+- Request/response tracking
+- Performance metrics
+- Usage analytics
+- Error monitoring
+- Token consumption tracking
+
+Configure your Langfuse credentials in the `.env` file to enable logging.
 
 ## Contributing 🤝
 
