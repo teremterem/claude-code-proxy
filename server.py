@@ -36,6 +36,7 @@ LANGFUSE_HOST = os.environ.get("LANGFUSE_HOST", "https://cloud.langfuse.com")
 
 # Initialize Langfuse client if credentials are available
 langfuse_client = None
+langfuse_trace = None
 if LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY:
     langfuse_client = Langfuse(public_key=LANGFUSE_PUBLIC_KEY, secret_key=LANGFUSE_SECRET_KEY, host=LANGFUSE_HOST)
 
@@ -101,6 +102,105 @@ async def capture_streaming_output(stream: AsyncGenerator) -> tuple[AsyncGenerat
     return tee_generator(), future
 
 
+def reconstruct_message_from_chunks(captured_output: list[bytes]) -> dict[str, Any]:
+    """Reconstruct a complete message from streaming chunks."""
+    # Initialize message structure
+    full_response = {
+        "id": None,
+        "model": None,
+        "role": "assistant",
+        "content": "",
+        "stop_reason": None,
+        "stop_sequence": None,
+        "usage": {"input_tokens": 0, "output_tokens": 0},
+    }
+
+    # Track content blocks and partial JSON for tool calls
+    content_blocks = {}
+    partial_jsons = {}
+
+    for chunk in captured_output:
+        chunk_str = chunk.decode("utf-8")
+
+        # Parse each event in the chunk
+        events = re.findall(r"event:\s*(\w+)\s*\ndata:\s*({.*?})\s*\n", chunk_str, re.DOTALL)
+
+        for event_type, data_str in events:
+            try:
+                data = json.loads(data_str.strip())
+
+                if event_type == "message_start":
+                    msg_data = data.get("message", {})
+                    full_response.update(
+                        {
+                            "id": msg_data.get("id"),
+                            "model": msg_data.get("model"),
+                            "usage": msg_data.get("usage", {}),
+                        }
+                    )
+
+                elif event_type == "content_block_start":
+                    idx = data.get("index", 0)
+                    content_block = data.get("content_block", {})
+
+                    if content_block.get("type") == "text":
+                        content_blocks[idx] = {"type": "text", "text": content_block.get("text", "")}
+                    elif content_block.get("type") == "tool_use":
+                        content_blocks[idx] = {
+                            "type": "tool_use",
+                            "id": content_block.get("id"),
+                            "name": content_block.get("name"),
+                            "input": content_block.get("input", {}),
+                        }
+                        partial_jsons[idx] = ""
+
+                elif event_type == "content_block_delta":
+                    idx = data.get("index", 0)
+                    delta = data.get("delta", {})
+
+                    if delta.get("type") == "text_delta":
+                        if idx in content_blocks and content_blocks[idx]["type"] == "text":
+                            content_blocks[idx]["text"] += delta.get("text", "")
+
+                    elif delta.get("type") == "input_json_delta":
+                        if idx in partial_jsons:
+                            partial_jsons[idx] += delta.get("partial_json", "")
+
+                elif event_type == "content_block_stop":
+                    idx = data.get("index", 0)
+                    # Finalize tool input JSON if it was being built
+                    if idx in partial_jsons and idx in content_blocks:
+                        try:
+                            content_blocks[idx]["input"] = json.loads(partial_jsons[idx])
+                        except json.JSONDecodeError as e:
+                            logger.error("JSONDecodeError: %s\n\nJSON: %s", e, partial_jsons[idx])
+                            content_blocks[idx]["input"] = partial_jsons[idx]
+
+                elif event_type == "message_delta":
+                    delta = data.get("delta", {})
+                    if "stop_reason" in delta:
+                        full_response["stop_reason"] = delta["stop_reason"]
+                    if "stop_sequence" in delta:
+                        full_response["stop_sequence"] = delta["stop_sequence"]
+
+                    usage = data.get("usage", {})
+                    if usage:
+                        full_response["usage"].update(usage)
+
+            except json.JSONDecodeError as e:
+                logger.error("JSONDecodeError: %s\n\nFULL CHUNK JSON: %s", e, data_str)
+                continue
+
+    content_parts = []
+    for idx in sorted(content_blocks.keys()):
+        if content_blocks[idx]["type"] == "text":
+            content_parts.append(content_blocks[idx]["text"])
+
+    full_response["content"] = "".join(content_parts)
+
+    return full_response
+
+
 async def trace_to_langfuse(
     request_data: dict[str, Any], response_data: Any, is_streaming: bool, captured_output_future: asyncio.Future = None
 ) -> None:
@@ -140,30 +240,11 @@ async def trace_to_langfuse(
         # Await for the captured streaming chunks
         captured_output = await captured_output_future
 
-        # Parse captured streaming chunks to reconstruct the response
-        full_response = {"chunks_raw": []}
-        content_parts = []
+        # Reconstruct the complete message from chunks
+        reconstructed = reconstruct_message_from_chunks(captured_output)
 
-        for chunk in captured_output:
-            chunk_str = chunk.decode("utf-8")
-            full_response["chunks_raw"].append(chunk_str)
-
-            # Split chunk_str by event/data pattern to handle multiple events in one chunk
-            event_data_parts = re.split(r"\s*event:\s*\w+\s+data:\s*", chunk_str, flags=re.MULTILINE)
-            # Filter out empty parts
-            event_data_parts = [part.strip() for part in event_data_parts if part.strip()]
-            for json_portion in event_data_parts:
-                try:
-                    # TODO Merge these chunks into a single dictionary eventually ?
-                    parsed_chunk = json.loads(json_portion)
-                    # Extract content from delta
-                    if "delta" in parsed_chunk and "text" in parsed_chunk["delta"]:
-                        content_parts.append(parsed_chunk["delta"]["text"])
-                except json.JSONDecodeError:
-                    continue
-
-        metadata["response"] = full_response
-        trace_output = {"content": "".join(content_parts), "role": "assistant"}
+        metadata["response"] = reconstructed["message"]
+        trace_output = reconstructed["response"]
     else:
         # For non-streaming, capture all response fields
         metadata["response"] = response_data
