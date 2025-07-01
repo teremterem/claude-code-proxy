@@ -19,7 +19,7 @@ A proxy server that accepts Anthropic API requests, forwards them through LiteLL
 
 1. **Clone this repository**:
    ```bash
-   git clone https://github.com/1rgs/claude-code-openai.git
+   git clone https://github.com/teremterem/claude-code-openai.git
    cd claude-code-openai
    ```
 

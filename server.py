@@ -8,13 +8,22 @@ from typing import Any, AsyncGenerator
 
 from fastapi.responses import StreamingResponse
 import litellm
-from litellm.proxy.pass_through_endpoints.llm_provider_handlers.anthropic_passthrough_logging_handler import (
-    AnthropicPassthroughLoggingHandler,
-)
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from langfuse import Langfuse
+
+
+PROMPTS_TO_SKIP = [
+    "Analyze this message and come up with a single positive, cheerful and delightful verb in gerund form that's "
+    "related to the message. Only include the word with no other text or punctuation. The word should have the first "
+    "letter capitalized. Add some whimsy and surprise to entertain the user. Ensure the word is highly relevant to "
+    "the user's message. Synonyms are welcome, including obscure words. Be careful to avoid words that might look "
+    "alarming or concerning to the software engineer seeing it as a status notification, such as Connecting, "
+    "Disconnecting, Retrying, Lagging, Freezing, etc. NEVER use a destructive word, such as Terminating, Killing, "
+    "Deleting, Destroying, Stopping, Exiting, or similar. NEVER use a word that may be derogatory, offensive, or "
+    "inappropriate in a non-coding context, such as Penetrating.",
+]
 
 
 # Load environment variables from .env file
@@ -106,6 +115,14 @@ async def trace_to_langfuse(
     # Handle system message for Langfuse - move it to the beginning of messages
     if "system" in langfuse_request and langfuse_request["system"]:
         system_content = langfuse_request.pop("system")
+        if (
+            isinstance(system_content, (list, tuple))
+            and "text" in system_content[0]  # We already checked if it's not empty with the outer if-statement
+            and system_content[0]["text"] in PROMPTS_TO_SKIP
+        ):
+            # Let's unclutter the logs by skipping non-useful prompts
+            return
+
         messages = langfuse_request.get("messages", []).copy()
 
         # Prepend system message to the messages array
