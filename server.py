@@ -4,7 +4,7 @@ import logging
 import os
 import re
 import sys
-from typing import Any, AsyncGenerator
+from typing import Any, AsyncGenerator, Optional, Union
 
 from fastapi.responses import StreamingResponse
 import litellm
@@ -102,107 +102,47 @@ async def capture_streaming_output(stream: AsyncGenerator) -> tuple[AsyncGenerat
     return tee_generator(), future
 
 
-def reconstruct_message_from_chunks(captured_output: list[bytes]) -> dict[str, Any]:
-    """Reconstruct a complete message from streaming chunks."""
-    # Initialize message structure
-    full_response = {
-        "id": None,
-        "model": None,
-        "role": "assistant",
-        "content": "",
-        "stop_reason": None,
-        "stop_sequence": None,
-        "usage": {"input_tokens": 0, "output_tokens": 0},
-    }
+def merge_dict_recursively(target: dict, source: dict) -> None:
+    """Merge source dict into target dict recursively with list concatenation."""
+    for key, value in source.items():
+        if key in target:
+            existing = target[key]
+            if isinstance(existing, dict) and isinstance(value, dict):
+                merge_dict_recursively(existing, value)
+            elif isinstance(existing, list) and isinstance(value, list):
+                existing.extend(value)
+            elif isinstance(existing, list):
+                existing.append(value)
+            else:
+                target[key] = [existing, value]
+        else:
+            target[key] = value
 
-    # Track content blocks and partial JSON for tool calls
-    content_blocks = {}
-    partial_jsons = {}
+
+def reconstruct_message_from_chunks(captured_output: list[bytes]) -> dict[str, Any]:
+    """Reconstruct a complete message from streaming chunks by merging all JSON data."""
+    merged_data = {}
 
     for chunk in captured_output:
         chunk_str = chunk.decode("utf-8")
 
         # Parse each event in the chunk
-        events = re.findall(r"event:\s*(\w+)\s*\ndata:\s*({.*?})\s*\n", chunk_str, re.DOTALL)
+        events = re.findall(r"event:\s*\w+\s*\ndata:\s*({.*?})\s*\n", chunk_str, re.DOTALL)
 
-        for event_type, data_str in events:
+        for data_str in events:
             try:
                 data = json.loads(data_str.strip())
-
-                if event_type == "message_start":
-                    msg_data = data.get("message", {})
-                    full_response.update(
-                        {
-                            "id": msg_data.get("id"),
-                            "model": msg_data.get("model"),
-                            "usage": msg_data.get("usage", {}),
-                        }
-                    )
-
-                elif event_type == "content_block_start":
-                    idx = data.get("index", 0)
-                    content_block = data.get("content_block", {})
-
-                    if content_block.get("type") == "text":
-                        content_blocks[idx] = {"type": "text", "text": content_block.get("text", "")}
-                    elif content_block.get("type") == "tool_use":
-                        content_blocks[idx] = {
-                            "type": "tool_use",
-                            "id": content_block.get("id"),
-                            "name": content_block.get("name"),
-                            "input": content_block.get("input", {}),
-                        }
-                        partial_jsons[idx] = ""
-
-                elif event_type == "content_block_delta":
-                    idx = data.get("index", 0)
-                    delta = data.get("delta", {})
-
-                    if delta.get("type") == "text_delta":
-                        if idx in content_blocks and content_blocks[idx]["type"] == "text":
-                            content_blocks[idx]["text"] += delta.get("text", "")
-
-                    elif delta.get("type") == "input_json_delta":
-                        if idx in partial_jsons:
-                            partial_jsons[idx] += delta.get("partial_json", "")
-
-                elif event_type == "content_block_stop":
-                    idx = data.get("index", 0)
-                    # Finalize tool input JSON if it was being built
-                    if idx in partial_jsons and idx in content_blocks:
-                        try:
-                            content_blocks[idx]["input"] = json.loads(partial_jsons[idx])
-                        except json.JSONDecodeError as e:
-                            logger.error("JSONDecodeError: %s\n\nJSON: %s", e, partial_jsons[idx])
-                            content_blocks[idx]["input"] = partial_jsons[idx]
-
-                elif event_type == "message_delta":
-                    delta = data.get("delta", {})
-                    if "stop_reason" in delta:
-                        full_response["stop_reason"] = delta["stop_reason"]
-                    if "stop_sequence" in delta:
-                        full_response["stop_sequence"] = delta["stop_sequence"]
-
-                    usage = data.get("usage", {})
-                    if usage:
-                        full_response["usage"].update(usage)
-
+                merge_dict_recursively(merged_data, data)
             except json.JSONDecodeError as e:
                 logger.error("JSONDecodeError: %s\n\nFULL CHUNK JSON: %s", e, data_str)
                 continue
 
-    content_parts = []
-    for idx in sorted(content_blocks.keys()):
-        if content_blocks[idx]["type"] == "text":
-            content_parts.append(content_blocks[idx]["text"])
-
-    full_response["content"] = "".join(content_parts)
-
-    return full_response
+    return merged_data
 
 
 async def trace_to_langfuse(
-    request_data: dict[str, Any], response_data: Any, is_streaming: bool, captured_output_future: asyncio.Future = None
+    request_data: dict[str, Any],
+    response_data: Union[dict[str, Any], asyncio.Future],
 ) -> None:
     """Trace request and response to Langfuse asynchronously."""
     if not langfuse_client:
@@ -235,20 +175,26 @@ async def trace_to_langfuse(
 
     metadata = {"request": {k: v for k, v in langfuse_request.items() if k != "messages"}}
 
+    is_streaming = isinstance(response_data, asyncio.Future)
+
     # Handle response data based on streaming mode
     if is_streaming:
         # Await for the captured streaming chunks
-        captured_output = await captured_output_future
+        response_data = await response_data  # It's a Future and it will contain all the captured chunks in a list
 
         # Reconstruct the complete message from chunks
-        reconstructed = reconstruct_message_from_chunks(captured_output)
+        reconstructed = reconstruct_message_from_chunks(response_data)
 
-        metadata["response"] = reconstructed["message"]
-        trace_output = reconstructed["response"]
+        metadata["response"] = reconstructed
+        trace_output = reconstructed
     else:
         # For non-streaming, capture all response fields
-        metadata["response"] = response_data
-        trace_output = response_data
+        langfuse_response = response_data.copy()
+        trace_output = {
+            "role": langfuse_response.pop("role", None),
+            "content": langfuse_response.pop("content", None),
+        }
+        metadata["response"] = langfuse_response
 
     # Create generation span
     langfuse_trace.generation(
@@ -310,7 +256,7 @@ async def create_message(request: dict[str, Any], raw_request: Request) -> Any:
 
         # Start Langfuse tracing in background task with captured output future
         if langfuse_client:
-            asyncio.create_task(trace_to_langfuse(request, response, is_streaming, captured_chunks_future))
+            asyncio.create_task(trace_to_langfuse(request, captured_chunks_future))
 
         return StreamingResponse(
             tee_stream,
@@ -319,7 +265,7 @@ async def create_message(request: dict[str, Any], raw_request: Request) -> Any:
     else:
         # For non-streaming, trace immediately
         if langfuse_client:
-            asyncio.create_task(trace_to_langfuse(request, response, is_streaming))
+            asyncio.create_task(trace_to_langfuse(request, response))
 
         return response
 
