@@ -4,7 +4,7 @@ import logging
 import os
 import re
 import sys
-from typing import Any, AsyncGenerator, Optional, Union
+from typing import Any, AsyncGenerator, Union
 
 from fastapi.responses import StreamingResponse
 import litellm
@@ -102,13 +102,76 @@ async def capture_streaming_output(stream: AsyncGenerator) -> tuple[AsyncGenerat
     return tee_generator(), future
 
 
-def merge_dict_recursively(target: dict, source: dict) -> None:
-    """Merge source dict into target dict recursively with list concatenation."""
+def merge_anthropic_streaming_dicts_recursively(target: dict, source: dict, dict_path: tuple = ()) -> None:
+    """Merge source dict into target dict recursively with Anthropic streaming protocol support."""
+
     for key, value in source.items():
+        current_path = dict_path + (key,)
+
+        # Special Anthropic streaming protocol handling
+        if current_path == ("type",):
+            continue
+        elif current_path == ("index",):
+            continue
+        elif current_path == ("content_block",):
+            # Initialize content block structure as dict with int indices
+            if "content" not in target:
+                target["content"] = {}
+
+            index = source.get("index", 0)
+            # Set the initial content block at this index
+            target["content"][index] = value
+
+            input_value = target["content"][index].get("input")
+            if input_value == {}:
+                # For some reason when the start of the content_block is streamed an empty dict is put in the input
+                # field. We need to replace it with an empty string, so it is possible to accumulate partial_json
+                # strings there.
+                target["content"][index]["input"] = ""
+            continue
+        elif current_path == ("delta",):
+            # Handle delta updates for streaming content
+            if isinstance(value, dict):
+                delta_type = value.get("type")
+                index = source.get("index", 0)
+
+                if delta_type == "text_delta":
+                    # Ensure content dict exists and has this index
+                    if "content" not in target:
+                        target["content"] = {}
+                    if index not in target["content"]:
+                        target["content"][index] = {"type": "text", "text": ""}
+
+                    # Append text delta
+                    if "text" in value:
+                        target["content"][index]["text"] += value["text"]
+
+                elif delta_type == "input_json_delta":
+                    # Handle tool input JSON delta
+                    if "content" not in target:
+                        target["content"] = {}
+                    if index not in target["content"]:
+                        target["content"][index] = {"type": "tool_use", "input": ""}
+
+                    # Append partial JSON
+                    if "partial_json" in value:
+                        if "input" not in target["content"][index]:
+                            target["content"][index]["input"] = ""
+                        try:
+                            target["content"][index]["input"] += value["partial_json"]
+                        except:
+                            from pprint import pprint
+
+                            pprint(target["content"][index])
+                            pprint(value)
+                            raise
+            continue
+
+        # Regular merging for non-Anthropic streaming keys
         if key in target:
             existing = target[key]
             if isinstance(existing, dict) and isinstance(value, dict):
-                merge_dict_recursively(existing, value)
+                merge_anthropic_streaming_dicts_recursively(existing, value, current_path)
             elif isinstance(existing, list) and isinstance(value, list):
                 existing.extend(value)
             elif isinstance(existing, list):
@@ -132,10 +195,29 @@ def reconstruct_message_from_chunks(captured_output: list[bytes]) -> dict[str, A
         for data_str in events:
             try:
                 data = json.loads(data_str.strip())
-                merge_dict_recursively(merged_data, data)
+                merge_anthropic_streaming_dicts_recursively(merged_data, data)
             except json.JSONDecodeError as e:
                 logger.error("JSONDecodeError: %s\n\nFULL CHUNK JSON: %s", e, data_str)
                 continue
+
+    # Post-process: Convert content dict to sorted list and parse JSON strings
+    if "content" in merged_data and isinstance(merged_data["content"], dict):
+        # Convert content dict to sorted list
+        content_blocks = []
+        for index in sorted(merged_data["content"].keys()):
+            content_block = merged_data["content"][index]
+
+            # Parse tool input JSON if it's a string
+            if content_block.get("type") == "tool_use" and "input" in content_block:
+                if isinstance(content_block["input"], str):
+                    try:
+                        content_block["input"] = json.loads(content_block["input"])
+                    except json.JSONDecodeError as e:
+                        logger.error("Failed to parse tool input JSON: %s\n\nJSON: %s", e, content_block["input"])
+
+            content_blocks.append(content_block)
+
+        merged_data["content"] = content_blocks
 
     return merged_data
 
@@ -183,18 +265,15 @@ async def trace_to_langfuse(
         response_data = await response_data  # It's a Future and it will contain all the captured chunks in a list
 
         # Reconstruct the complete message from chunks
-        reconstructed = reconstruct_message_from_chunks(response_data)
-
-        metadata["response"] = reconstructed
-        trace_output = reconstructed
+        langfuse_response = reconstruct_message_from_chunks(response_data)
     else:
-        # For non-streaming, capture all response fields
         langfuse_response = response_data.copy()
-        trace_output = {
-            "role": langfuse_response.pop("role", None),
-            "content": langfuse_response.pop("content", None),
-        }
-        metadata["response"] = langfuse_response
+
+    trace_output = {
+        "role": langfuse_response.pop("role", None),
+        "content": langfuse_response.pop("content", None),
+    }
+    metadata["response"] = langfuse_response
 
     # Create generation span
     langfuse_trace.generation(
