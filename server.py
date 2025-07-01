@@ -110,9 +110,19 @@ def merge_anthropic_streaming_dicts_recursively(target: dict, source: dict, dict
 
         # Special Anthropic streaming protocol handling
         if current_path == ("type",):
-            continue
+            pass
+
         elif current_path == ("index",):
-            continue
+            pass
+
+        elif current_path == ("usage",):
+            if "message" not in target:
+                target["message"] = {}
+            if "usage" not in target["message"]:
+                target["message"]["usage"] = {}
+
+            target["message"]["usage"].update(value)
+
         elif current_path == ("content_block",):
             # Initialize content block structure as dict with int indices
             if "content" not in target:
@@ -128,7 +138,7 @@ def merge_anthropic_streaming_dicts_recursively(target: dict, source: dict, dict
                 # field. We need to replace it with an empty string, so it is possible to accumulate partial_json
                 # strings there.
                 target["content"][index]["input"] = ""
-            continue
+
         elif current_path == ("delta",):
             # Handle delta updates for streaming content
             if isinstance(value, dict):
@@ -157,18 +167,10 @@ def merge_anthropic_streaming_dicts_recursively(target: dict, source: dict, dict
                     if "partial_json" in value:
                         if "input" not in target["content"][index]:
                             target["content"][index]["input"] = ""
-                        try:
-                            target["content"][index]["input"] += value["partial_json"]
-                        except:
-                            from pprint import pprint
-
-                            pprint(target["content"][index])
-                            pprint(value)
-                            raise
-            continue
+                        target["content"][index]["input"] += value["partial_json"]
 
         # Regular merging for non-Anthropic streaming keys
-        if key in target:
+        elif key in target:
             existing = target[key]
             if isinstance(existing, dict) and isinstance(value, dict):
                 merge_anthropic_streaming_dicts_recursively(existing, value, current_path)
