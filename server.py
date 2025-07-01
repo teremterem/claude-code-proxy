@@ -204,8 +204,7 @@ def reconstruct_message_from_chunks(captured_output: list[bytes]) -> dict[str, A
     if "content" in merged_data and isinstance(merged_data["content"], dict):
         # Convert content dict to sorted list
         content_blocks = []
-        for index in sorted(merged_data["content"].keys()):
-            content_block = merged_data["content"][index]
+        for _, content_block in sorted(merged_data["content"].items(), key=lambda x: x[0]):
 
             # Parse tool input JSON if it's a string
             if content_block.get("type") == "tool_use" and "input" in content_block:
@@ -217,7 +216,10 @@ def reconstruct_message_from_chunks(captured_output: list[bytes]) -> dict[str, A
 
             content_blocks.append(content_block)
 
-        merged_data["content"] = content_blocks
+        if "message" not in merged_data:
+            merged_data["message"] = {}
+
+        merged_data["message"]["content"] = content_blocks
 
     return merged_data
 
@@ -266,13 +268,19 @@ async def trace_to_langfuse(
 
         # Reconstruct the complete message from chunks
         langfuse_response = reconstruct_message_from_chunks(response_data)
+
+        trace_output = {
+            "role": langfuse_response["message"].pop("role", None),
+            "content": langfuse_response["message"].pop("content", None),
+        }
     else:
         langfuse_response = response_data.copy()
 
-    trace_output = {
-        "role": langfuse_response.pop("role", None),
-        "content": langfuse_response.pop("content", None),
-    }
+        trace_output = {
+            "role": langfuse_response.pop("role", None),
+            "content": langfuse_response.pop("content", None),
+        }
+
     metadata["response"] = langfuse_response
 
     # Create generation span
