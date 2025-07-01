@@ -1,26 +1,34 @@
+import asyncio
+import json
 import logging
 import os
+import re
 import sys
-from typing import Any
+from typing import Any, AsyncGenerator
 
 from fastapi.responses import StreamingResponse
 import litellm
+from litellm.proxy.pass_through_endpoints.llm_provider_handlers.anthropic_passthrough_logging_handler import (
+    AnthropicPassthroughLoggingHandler,
+)
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
+from langfuse import Langfuse
 
 
 # Load environment variables from .env file
 load_dotenv()
 
-# Configure LiteLLM logging with Langfuse
-litellm.success_callback = ["langfuse"]
-litellm.failure_callback = ["langfuse"]
-
 # Set Langfuse environment variables (will be read from .env if present)
 LANGFUSE_PUBLIC_KEY = os.environ.get("LANGFUSE_PUBLIC_KEY")
 LANGFUSE_SECRET_KEY = os.environ.get("LANGFUSE_SECRET_KEY")
 LANGFUSE_HOST = os.environ.get("LANGFUSE_HOST", "https://cloud.langfuse.com")
+
+# Initialize Langfuse client if credentials are available
+langfuse_client = None
+if LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY:
+    langfuse_client = Langfuse(public_key=LANGFUSE_PUBLIC_KEY, secret_key=LANGFUSE_SECRET_KEY, host=LANGFUSE_HOST)
 
 
 # Configure logging
@@ -64,6 +72,103 @@ app = FastAPI()
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 
 
+async def capture_streaming_output(stream: AsyncGenerator) -> tuple[AsyncGenerator, asyncio.Future]:
+    """Tee the streaming response to capture output while allowing passthrough."""
+    captured_chunks = []
+    future = asyncio.Future()
+
+    async def tee_generator():
+        try:
+            async for chunk in stream:
+                captured_chunks.append(chunk)
+                yield chunk
+        finally:
+            # Set the future result when streaming is complete
+            future.set_result(captured_chunks)
+
+    return tee_generator(), future
+
+
+async def trace_to_langfuse(
+    request_data: dict[str, Any], response_data: Any, is_streaming: bool, captured_output_future: asyncio.Future = None
+) -> None:
+    """Trace request and response to Langfuse asynchronously."""
+    if not langfuse_client:
+        return
+
+    # Prepare metadata with nested structure preserved
+    # Create a copy of request data for Langfuse logging
+    langfuse_request = request_data.copy()
+
+    # Remove sensitive data before logging
+    langfuse_request.pop("api_key", None)
+
+    # Handle system message for Langfuse - move it to the beginning of messages
+    if "system" in langfuse_request and langfuse_request["system"]:
+        system_content = langfuse_request.pop("system")
+        messages = langfuse_request.get("messages", []).copy()
+
+        # Prepend system message to the messages array
+        system_message = {"role": "system", "content": system_content}
+        messages.insert(0, system_message)
+        langfuse_request["messages"] = messages
+
+    metadata = {"request": {k: v for k, v in langfuse_request.items() if k != "messages"}}
+
+    # Handle response data based on streaming mode
+    if is_streaming:
+        # Await for the captured streaming chunks
+        captured_output = await captured_output_future
+
+        # Parse captured streaming chunks to reconstruct the response
+        full_response = {"streaming": True, "chunks_raw": []}
+        content_parts = []
+
+        for chunk in captured_output:
+            chunk_str = chunk.decode("utf-8")
+            full_response["chunks_raw"].append(chunk_str)
+
+            # Split chunk_str by event/data pattern to handle multiple events in one chunk
+            event_data_parts = re.split(r"\s*event:\s*\w+\s+data:\s*", chunk_str, flags=re.MULTILINE)
+            # Filter out empty parts
+            event_data_parts = [part.strip() for part in event_data_parts if part.strip()]
+            for json_portion in event_data_parts:
+                try:
+                    # TODO Merge these chunks into a single dictionary eventually ?
+                    parsed_chunk = json.loads(json_portion)
+                    # Extract content from delta
+                    if "delta" in parsed_chunk and "text" in parsed_chunk["delta"]:
+                        content_parts.append(parsed_chunk["delta"]["text"])
+                except json.JSONDecodeError:
+                    continue
+
+        metadata["response"] = full_response
+        trace_output = {"content": "".join(content_parts), "role": "assistant"}
+    else:
+        # For non-streaming, capture all response fields
+        metadata["response"] = response_data
+        trace_output = response_data
+
+    # Create a trace
+    trace = langfuse_client.trace(
+        name="anthropic_proxy_request",
+        input=langfuse_request.get("messages", []),
+        output=trace_output,
+        metadata=metadata,
+    )
+    # Create generation span
+    trace.generation(
+        name="litellm_anthropic_call",
+        model=request_data.get("model", "unknown"),
+        input=langfuse_request.get("messages", []),
+        output=trace_output,
+        metadata=metadata,
+    )
+
+    # Flush to ensure data is sent
+    langfuse_client.flush()
+
+
 @app.post("/v1/messages")
 async def create_message(request: dict[str, Any], raw_request: Request) -> Any:
     # Get the display name for logging, just the model name without provider prefix
@@ -100,21 +205,29 @@ async def create_message(request: dict[str, Any], raw_request: Request) -> Any:
         200,  # Assuming success at this point
     )
 
-    metadata = request.setdefault("metadata", {})
-    # Copy all request fields (except messages) to metadata for Langfuse logging
-    metadata["trace_metadata"] = {k: v for k, v in request.items() if k not in ["messages", "metadata"]}
-
     # Use LiteLLM's native Anthropic format support
     response = await litellm.anthropic.messages.acreate(**request)
 
-    # Handle streaming responses
-    if request.get("stream", False):
+    # Handle streaming responses with capture for Langfuse
+    is_streaming = request.get("stream", False)
+    if is_streaming:
+        # Create tee to capture streaming output
+        tee_stream, captured_chunks_future = await capture_streaming_output(response)
+
+        # Start Langfuse tracing in background task with captured output future
+        if langfuse_client:
+            asyncio.create_task(trace_to_langfuse(request, response, is_streaming, captured_chunks_future))
+
         return StreamingResponse(
-            response,
+            tee_stream,
             media_type="text/event-stream",
         )
+    else:
+        # For non-streaming, trace immediately
+        if langfuse_client:
+            asyncio.create_task(trace_to_langfuse(request, response, is_streaming))
 
-    return response
+        return response
 
 
 @app.get("/")
