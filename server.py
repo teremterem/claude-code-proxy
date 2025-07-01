@@ -6,11 +6,11 @@ import re
 import sys
 from typing import Any, AsyncGenerator, Union
 
-from fastapi.responses import StreamingResponse
 import litellm
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
+from fastapi.responses import StreamingResponse
 from langfuse import Langfuse
 
 
@@ -204,7 +204,7 @@ def reconstruct_message_from_chunks(captured_output: list[bytes]) -> dict[str, A
     if "content" in merged_data and isinstance(merged_data["content"], dict):
         # Convert content dict to sorted list
         content_blocks = []
-        for _, content_block in sorted(merged_data["content"].items(), key=lambda x: x[0]):
+        for _, content_block in sorted(merged_data.pop("content").items(), key=lambda x: x[0]):
 
             # Parse tool input JSON if it's a string
             if content_block.get("type") == "tool_use" and "input" in content_block:
