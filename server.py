@@ -39,6 +39,9 @@ langfuse_client = None
 if LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY:
     langfuse_client = Langfuse(public_key=LANGFUSE_PUBLIC_KEY, secret_key=LANGFUSE_SECRET_KEY, host=LANGFUSE_HOST)
 
+    # Create a trace
+    langfuse_trace = langfuse_client.trace(name="proxy_session")
+
 
 # Configure logging
 logging.basicConfig(
@@ -166,15 +169,8 @@ async def trace_to_langfuse(
         metadata["response"] = response_data
         trace_output = response_data
 
-    # Create a trace
-    trace = langfuse_client.trace(
-        name="anthropic_proxy_request",
-        input=langfuse_request.get("messages", []),
-        output=trace_output,
-        metadata=metadata,
-    )
     # Create generation span
-    trace.generation(
+    langfuse_trace.generation(
         name="litellm_anthropic_call",
         model=request_data.get("model", "unknown"),
         input=langfuse_request.get("messages", []),

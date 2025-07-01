@@ -12,6 +12,7 @@ dependencies = [
     "fastapi[standard]>=0.115.11",
     "langfuse>=2.0.0,<3.0.0",
     "litellm>=1.40.14",
+    "pylint",
     "python-dotenv>=1.0.0",
     "uvicorn>=0.34.0",
 ]
