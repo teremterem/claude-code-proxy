@@ -138,7 +138,7 @@ async def trace_to_langfuse(
         captured_output = await captured_output_future
 
         # Parse captured streaming chunks to reconstruct the response
-        full_response = {"streaming": True, "chunks_raw": []}
+        full_response = {"chunks_raw": []}
         content_parts = []
 
         for chunk in captured_output:
