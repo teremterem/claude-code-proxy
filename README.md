@@ -1,11 +1,11 @@
-# Anthropic API Proxy 🔄
+# Anthropic API Proxy (repurposed) 🔄
 
 **A simple proxy server for Anthropic API using LiteLLM with Langfuse logging.** 🤝
 
 A proxy server that accepts Anthropic API requests, forwards them through LiteLLM, and logs all interactions to Langfuse for observability and analytics. 🌉
 
 
-![Anthropic API Proxy](pic.png)
+![Anthropic API Proxy (repurposed)](pic2.jpg)
 
 ## Quick Start ⚡
 
