@@ -14,17 +14,11 @@ from fastapi.responses import StreamingResponse
 from langfuse import Langfuse
 
 
-PROMPTS_TO_SKIP = [
+PROMPT_BEGINNINGS_TO_SKIP = [  # These are the prompts that we DO NOT want to log to Langfuse
     "Analyze this message and come up with a single positive, cheerful and delightful verb in gerund form that's "
-    "related to the message. Only include the word with no other text or punctuation. The word should have the first "
-    "letter capitalized. Add some whimsy and surprise to entertain the user. Ensure the word is highly relevant to "
-    "the user's message. Synonyms are welcome, including obscure words. Be careful to avoid words that might look "
-    "alarming or concerning to the software engineer seeing it as a status notification, such as Connecting, "
-    "Disconnecting, Retrying, Lagging, Freezing, etc. NEVER use a destructive word, such as Terminating, Killing, "
-    "Deleting, Destroying, Stopping, Exiting, or similar. NEVER use a word that may be derogatory, offensive, or "
-    "inappropriate in a non-coding context, such as Penetrating.",
+    "related to the message.",
 ]
-
+NEW_USER_UTTERANCE_PROMPT = "Analyze if this message indicates a new conversation topic."
 
 # Load environment variables from .env file
 load_dotenv()
@@ -40,8 +34,8 @@ langfuse_trace = None
 if LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY:
     langfuse_client = Langfuse(public_key=LANGFUSE_PUBLIC_KEY, secret_key=LANGFUSE_SECRET_KEY, host=LANGFUSE_HOST)
 
-    # Create a trace
-    langfuse_trace = langfuse_client.trace(name="proxy_session")
+    # Create a Langfuse trace signifying that the proxy has started
+    langfuse_trace = langfuse_client.trace(name="Claude Code Proxy Started")
 
 
 # Configure logging
@@ -247,10 +241,22 @@ async def trace_to_langfuse(
         if (
             isinstance(system_content, (list, tuple))
             and "text" in system_content[0]  # We already checked if it's not empty with the outer if-statement
-            and system_content[0]["text"] in PROMPTS_TO_SKIP
         ):
-            # Let's unclutter the logs by skipping non-useful prompts
-            return
+            if any(system_content[0]["text"].startswith(prompt) for prompt in PROMPT_BEGINNINGS_TO_SKIP):
+                # Let's unclutter the logs by skipping non-useful prompts
+                return
+
+            if system_content[0]["text"].startswith(NEW_USER_UTTERANCE_PROMPT):
+                trace_input = None
+                messages = langfuse_request.get("messages")
+                if messages and messages[0]["role"] == "user":
+                    trace_input = messages[0]["content"]
+
+                global langfuse_trace  # pylint: disable=global-statement
+                langfuse_trace = langfuse_client.trace(
+                    name="User Utterance (Claude Code)",
+                    input=trace_input,
+                )
 
         messages = langfuse_request.get("messages", []).copy()
 
@@ -287,7 +293,7 @@ async def trace_to_langfuse(
 
     # Create generation span
     langfuse_trace.generation(
-        name="litellm_anthropic_call",
+        name="Anthropic Call",
         model=request_data.get("model", "unknown"),
         input=langfuse_request.get("messages", []),
         output=trace_output,
