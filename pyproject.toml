@@ -8,11 +8,11 @@ description = "Proxy between Claude Code and Anthropic API with Langfuse tracing
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "anthropic>=0.40.0",
+    "anthropic",
     "black",
-    "fastapi[standard]>=0.115.11",
-    "langfuse>=2.0.0,<3.0.0",
+    "fastapi[standard]",
+    "langfuse",
     "pylint",
-    "python-dotenv>=1.0.0",
-    "uvicorn>=0.34.0",
+    "python-dotenv",
+    "uvicorn",
 ]
