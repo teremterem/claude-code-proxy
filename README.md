@@ -2,7 +2,7 @@
 
 **A simple proxy server for Anthropic API using LiteLLM with Langfuse logging.** 🤝
 
-A proxy server for inspecting Claude Code's prompts (and responses) by routing Anthropic API calls through LiteLLM and logging them via Langfuse. 🌉
+A proxy server for inspecting [Claude Code](https://www.anthropic.com/claude-code)'s prompts (and responses) by routing Anthropic API calls through LiteLLM and logging them via Langfuse. 🌉
 
 
 ![Anthropic API Proxy (Repurposed)](pic3.jpeg)
@@ -12,7 +12,7 @@ A proxy server for inspecting Claude Code's prompts (and responses) by routing A
 ### Prerequisites
 
 - Anthropic API key 🔑
-- [Langfuse](https://langfuse.com) account and API keys (for logging) 📊
+- [Langfuse](https://langfuse.com/) account and API keys (for logging) 📊
 - [uv](https://github.com/astral-sh/uv) installed.
 
 ### Setup 🛠️
