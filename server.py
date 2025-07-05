@@ -293,7 +293,7 @@ async def trace_to_langfuse(
 
     # Create generation span
     langfuse_trace.generation(
-        name="litellm_anthropic_call",
+        name="Anthropic Call",
         model=request_data.get("model", "unknown"),
         input=langfuse_request.get("messages", []),
         output=trace_output,
