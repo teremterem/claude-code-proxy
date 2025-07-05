@@ -6,7 +6,7 @@ import re
 import sys
 from typing import Any, AsyncGenerator, Union
 
-import litellm
+from anthropic import AsyncAnthropic
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
@@ -77,6 +77,7 @@ for handler in logger.handlers:
 app = FastAPI()
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
+anthropic_client = AsyncAnthropic(api_key=ANTHROPIC_API_KEY) if ANTHROPIC_API_KEY else None
 
 
 async def capture_streaming_output(stream: AsyncGenerator) -> tuple[AsyncGenerator, asyncio.Future]:
@@ -317,8 +318,25 @@ async def create_message(request: dict[str, Any], raw_request: Request) -> Any:
         request.get("stream", False),
     )
 
-    # Add API key to request
-    request["api_key"] = ANTHROPIC_API_KEY
+    # Determine which API key to use
+    request_api_key = request.pop("api_key", None)
+    auth_header = raw_request.headers.get("authorization", "")
+    
+    # Extract API key from authorization header if present
+    if auth_header.startswith("Bearer "):
+        header_api_key = auth_header[7:]  # Remove "Bearer " prefix
+    else:
+        header_api_key = None
+    
+    # Priority: environment variable > request api_key > authorization header
+    api_key_to_use = ANTHROPIC_API_KEY or request_api_key or header_api_key
+    
+    if not api_key_to_use:
+        return {"error": "No API key provided. Set ANTHROPIC_API_KEY environment variable or provide API key in request."}
+    
+    # Create client with the appropriate API key
+    client_to_use = anthropic_client if ANTHROPIC_API_KEY else AsyncAnthropic(api_key=api_key_to_use)
+    
     logger.debug("Using Anthropic API key for model: %s", request.get("model"))
 
     # Only log basic info about the request, not the full details
@@ -340,8 +358,8 @@ async def create_message(request: dict[str, Any], raw_request: Request) -> Any:
         200,  # Assuming success at this point
     )
 
-    # Use LiteLLM's native Anthropic format support
-    response = await litellm.anthropic.messages.acreate(**request)
+    # Use direct Anthropic API call
+    response = await client_to_use.messages.create(**request)
 
     # Handle streaming responses with capture for Langfuse
     is_streaming = request.get("stream", False)
@@ -367,7 +385,7 @@ async def create_message(request: dict[str, Any], raw_request: Request) -> Any:
 
 @app.get("/")
 async def root() -> dict[str, str]:
-    return {"message": "Anthropic Proxy for LiteLLM"}
+    return {"message": "Anthropic Proxy with Langfuse Tracing"}
 
 
 # Define ANSI color codes for terminal output
