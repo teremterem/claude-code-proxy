@@ -5,7 +5,7 @@
 A proxy server that accepts Anthropic API requests, forwards them through LiteLLM, and logs all interactions to Langfuse for observability and analytics. 🌉
 
 
-![Anthropic API Proxy (Repurposed)](pic2.jpg)
+![Anthropic API Proxy (Repurposed)](pic3.jpeg)
 
 ## Quick Start ⚡
 
