@@ -4,7 +4,6 @@
 
 A proxy server for inspecting [Claude Code](https://www.anthropic.com/claude-code)'s prompts (and responses) by routing Anthropic API calls through LiteLLM and logging them via Langfuse. 🌉
 
-
 ![Anthropic API Proxy (Repurposed)](pic3.jpeg)
 
 ## Quick Start ⚡
@@ -19,7 +18,7 @@ A proxy server for inspecting [Claude Code](https://www.anthropic.com/claude-cod
 
 1. **Clone this repository**:
    ```bash
-   git clone https://github.com/teremterem/claude-code-openai.git
+   git clone https://github.com/teremterem/claude-code-proxy-repurposed.git
    cd claude-code-openai
    ```
 
