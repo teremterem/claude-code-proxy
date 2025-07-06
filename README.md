@@ -1,8 +1,8 @@
 # Claude Code Proxy 🔄 (Repurposed)
 
-**A simple proxy server for Anthropic API using LiteLLM with Langfuse logging.** 🤝
+**A simple proxy server for Anthropic API with Langfuse logging.** 🤝
 
-A proxy server that inspects prompts and responses from [Claude Code](https://www.anthropic.com/claude-code) - or any other app that uses the Anthropic API (and allows configuring the Anthropic API base URL) - by routing API calls through LiteLLM and logging them via Langfuse. 🌉
+A proxy server that inspects prompts and responses from [Claude Code](https://www.anthropic.com/claude-code) - or any other app that uses the Anthropic API (and allows configuring the Anthropic API base URL) - by routing API calls directly to Anthropic and logging them via Langfuse. 🌉
 
 ![Anthropic API Proxy (Repurposed)](pic3.jpeg)
 
@@ -61,26 +61,17 @@ A proxy server that inspects prompts and responses from [Claude Code](https://ww
 
 3. **That's it!** Your Claude Code client will now use Anthropic models through the proxy. 🎯
 
-## Supported Models
-
-The proxy supports all Anthropic models available through LiteLLM, including:
-- claude-3-5-sonnet-20241022
-- claude-3-5-haiku-20241022
-- claude-3-opus-20240229
-- And other Anthropic models supported by LiteLLM
-
 ## How It Works 🧩
 
 This proxy works by:
 
 1. **Receiving requests** in Anthropic's API format 📥
-2. **Converting** the requests to LiteLLM format 🔄
-3. **Sending** the request to Anthropic via LiteLLM 📤
-4. **Logging** all interactions to Langfuse for observability 📊
-5. **Converting** the response back to Anthropic format 🔄
-6. **Returning** the formatted response to the client ✅
+2. **Forwarding** the requests directly to Anthropic API 📤
+3. **Logging** all interactions to Langfuse for observability 📊
+4. **Streaming** responses back to the client with real-time capture 🔄
+5. **Returning** the response to the client ✅
 
-The proxy handles both streaming and non-streaming responses, maintaining compatibility with all Claude clients while providing comprehensive logging and analytics through Langfuse. 🌊
+The proxy handles both streaming and non-streaming responses, maintaining full compatibility with all Claude clients while providing comprehensive prompt/response tracing through Langfuse. Custom streaming reconstruction ensures complete message capture for logging. 🌊
 
 ## Langfuse Integration 📊
 

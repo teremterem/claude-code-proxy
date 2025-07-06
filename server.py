@@ -28,7 +28,10 @@ LANGFUSE_PUBLIC_KEY = os.environ.get("LANGFUSE_PUBLIC_KEY")
 LANGFUSE_SECRET_KEY = os.environ.get("LANGFUSE_SECRET_KEY")
 LANGFUSE_HOST = os.environ.get("LANGFUSE_HOST", "https://cloud.langfuse.com")
 
+# Anthropic API configuration
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
+ANTHROPIC_API_BASE_URL = os.environ.get("ANTHROPIC_API_BASE_URL", "https://api.anthropic.com")
+ANTHROPIC_API_VERSION = os.environ.get("ANTHROPIC_API_VERSION", "2023-06-01")
 
 app = FastAPI()
 
@@ -308,13 +311,17 @@ async def call_anthropic_api(request_data: dict[str, Any]) -> Any:
     """Make direct HTTP call to Anthropic API."""
     # Prepare request for Anthropic API
     anthropic_request = request_data.copy()
-    api_key = anthropic_request.pop("api_key")
 
-    headers = {"Content-Type": "application/json", "x-api-key": api_key, "anthropic-version": "2023-06-01"}
+    # Construct headers for Anthropic API
+    headers = {
+        "Content-Type": "application/json",
+        "anthropic-version": ANTHROPIC_API_VERSION,
+        "x-api-key": ANTHROPIC_API_KEY,
+    }
 
     session = aiohttp.ClientSession()
     try:
-        response = await session.post("https://api.anthropic.com/v1/messages", headers=headers, json=anthropic_request)
+        response = await session.post(f"{ANTHROPIC_API_BASE_URL}/v1/messages", headers=headers, json=anthropic_request)
 
         # Check response content type to determine if it's streaming
         content_type = response.headers.get("content-type", "").lower()
@@ -323,7 +330,8 @@ async def call_anthropic_api(request_data: dict[str, Any]) -> Any:
             return stream_anthropic_response(session, response)
         else:
             # Return JSON response for non-streaming
-            json_response = await response.json()
+            response_text = await response.text()
+            json_response = json.loads(response_text)
             await session.close()
             return json_response
     except Exception:
@@ -355,9 +363,6 @@ async def create_message(request: dict[str, Any], raw_request: Request) -> Any:
         request.get("model"),
         request.get("stream", False),
     )
-
-    # Add API key to request for internal processing
-    request["api_key"] = ANTHROPIC_API_KEY
 
     # Only log basic info about the request, not the full details
     logger.debug(
