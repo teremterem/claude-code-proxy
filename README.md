@@ -25,9 +25,32 @@ A proxy server that inspects prompts and responses from [Claude Code](https://ww
    ```
 
 2. **Install uv** (if you haven't already):
+
+   **macOS/Linux:**
    ```bash
    curl -LsSf https://astral.sh/uv/install.sh | sh
    ```
+
+   **macOS (using Homebrew):**
+   ```bash
+   brew install uv
+   ```
+
+   **Windows (using PowerShell):**
+   ```powershell
+   powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+   ```
+
+   **Windows (using Scoop):**
+   ```bash
+   scoop install uv
+   ```
+
+   **Alternative: pip install**
+   ```bash
+   pip install uv
+   ```
+
    *(`uv` will handle dependencies based on `pyproject.toml` when you run the server)*
 
 3. **Configure Environment Variables**:
