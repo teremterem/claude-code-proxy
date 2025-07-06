@@ -4,15 +4,15 @@ line-length = 119
 [project]
 name = "anthropic-proxy"
 version = "0.1.0"
-description = "Proxy that translates between Anthropic API and LiteLLM"
+description = "Direct proxy for Anthropic API with logging and tracing"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "aiohttp",
     "black",
-    "fastapi[standard]>=0.115.11",
-    "langfuse>=2.0.0,<3.0.0",
-    "litellm>=1.40.14",
+    "fastapi[standard]",
+    "langfuse<3.0.0",
     "pylint",
-    "python-dotenv>=1.0.0",
-    "uvicorn>=0.34.0",
+    "python-dotenv",
+    "uvicorn",
 ]

@@ -6,7 +6,7 @@ import re
 import sys
 from typing import Any, AsyncGenerator, Union
 
-import litellm
+import aiohttp
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
@@ -27,6 +27,10 @@ load_dotenv()
 LANGFUSE_PUBLIC_KEY = os.environ.get("LANGFUSE_PUBLIC_KEY")
 LANGFUSE_SECRET_KEY = os.environ.get("LANGFUSE_SECRET_KEY")
 LANGFUSE_HOST = os.environ.get("LANGFUSE_HOST", "https://cloud.langfuse.com")
+
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
+
+app = FastAPI()
 
 # Initialize Langfuse client if credentials are available
 langfuse_client = None
@@ -73,10 +77,6 @@ class ColorizedFormatter(logging.Formatter):
 for handler in logger.handlers:
     if isinstance(handler, logging.StreamHandler):
         handler.setFormatter(ColorizedFormatter("%(asctime)s - %(levelname)s - %(message)s"))
-
-app = FastAPI()
-
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 
 
 async def capture_streaming_output(stream: AsyncGenerator) -> tuple[AsyncGenerator, asyncio.Future]:
@@ -304,6 +304,45 @@ async def trace_to_langfuse(
     langfuse_client.flush()
 
 
+async def call_anthropic_api(request_data: dict[str, Any]) -> Any:
+    """Make direct HTTP call to Anthropic API."""
+    # Prepare request for Anthropic API
+    anthropic_request = request_data.copy()
+    api_key = anthropic_request.pop("api_key")
+
+    headers = {"Content-Type": "application/json", "x-api-key": api_key, "anthropic-version": "2023-06-01"}
+
+    session = aiohttp.ClientSession()
+    try:
+        response = await session.post("https://api.anthropic.com/v1/messages", headers=headers, json=anthropic_request)
+
+        # Check response content type to determine if it's streaming
+        content_type = response.headers.get("content-type", "").lower()
+        if "text/event-stream" in content_type or "application/x-ndjson" in content_type:
+            # Return async generator for streaming responses, keeping session alive
+            return stream_anthropic_response(session, response)
+        else:
+            # Return JSON response for non-streaming
+            json_response = await response.json()
+            await session.close()
+            return json_response
+    except Exception:
+        await session.close()
+        raise
+
+
+async def stream_anthropic_response(
+    session: aiohttp.ClientSession, response: aiohttp.ClientResponse
+) -> AsyncGenerator[bytes, None]:
+    """Stream response from Anthropic API."""
+    try:
+        async for chunk in response.content.iter_any():
+            if chunk:
+                yield chunk
+    finally:
+        await session.close()
+
+
 @app.post("/v1/messages")
 async def create_message(request: dict[str, Any], raw_request: Request) -> Any:
     # Get the display name for logging, just the model name without provider prefix
@@ -317,9 +356,8 @@ async def create_message(request: dict[str, Any], raw_request: Request) -> Any:
         request.get("stream", False),
     )
 
-    # Add API key to request
+    # Add API key to request for internal processing
     request["api_key"] = ANTHROPIC_API_KEY
-    logger.debug("Using Anthropic API key for model: %s", request.get("model"))
 
     # Only log basic info about the request, not the full details
     logger.debug(
@@ -340,8 +378,8 @@ async def create_message(request: dict[str, Any], raw_request: Request) -> Any:
         200,  # Assuming success at this point
     )
 
-    # Use LiteLLM's native Anthropic format support
-    response = await litellm.anthropic.messages.acreate(**request)
+    # Make direct call to Anthropic API
+    response = await call_anthropic_api(request)
 
     # Handle streaming responses with capture for Langfuse
     is_streaming = request.get("stream", False)
@@ -367,7 +405,7 @@ async def create_message(request: dict[str, Any], raw_request: Request) -> Any:
 
 @app.get("/")
 async def root() -> dict[str, str]:
-    return {"message": "Anthropic Proxy for LiteLLM"}
+    return {"message": "Anthropic API Proxy"}
 
 
 # Define ANSI color codes for terminal output

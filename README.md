@@ -1,8 +1,8 @@
-# Anthropic API Proxy 🔄 (Repurposed)
+# Claude Code Proxy 🔄 (Repurposed)
 
 **A simple proxy server for Anthropic API using LiteLLM with Langfuse logging.** 🤝
 
-A proxy server for inspecting [Claude Code](https://www.anthropic.com/claude-code)'s prompts (and responses) by routing Anthropic API calls through LiteLLM and logging them via Langfuse. 🌉
+A proxy server that inspects prompts and responses from [Claude Code](https://www.anthropic.com/claude-code) - or any other app that uses the Anthropic API (and allows configuring the Anthropic API base URL) - by routing API calls through LiteLLM and logging them via Langfuse. 🌉
 
 ![Anthropic API Proxy (Repurposed)](pic3.jpeg)
 
