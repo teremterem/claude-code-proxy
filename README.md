@@ -12,8 +12,8 @@ A proxy server that inspects prompts and responses from [Claude Code](https://ww
 
 ### Prerequisites
 
-- Anthropic API key 🔑
-- [Langfuse](https://langfuse.com/) account and API keys (for logging) 📊
+- [Anthropic API](https://console.anthropic.com/) key 🔑
+- [Langfuse](https://langfuse.com/) account and API keys (for tracing) 📊
 - [uv](https://github.com/astral-sh/uv) installed.
 
 ### Setup 🛠️
