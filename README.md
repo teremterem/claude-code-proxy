@@ -5,7 +5,7 @@
 A proxy server that inspects prompts and responses from [Claude Code](https://www.anthropic.com/claude-code) - or any other app that uses the Anthropic API (and allows configuring the Anthropic API base URL) - by routing API calls directly to Anthropic and logging them via Langfuse. 🌉
 
 ![Anthropic API Proxy (Repurposed)](images/pic3.jpeg)
-![Anthropic API Proxy (Repurposed)](images/langfuse1.jpeg)
+<!-- ![Anthropic API Proxy (Repurposed)](images/langfuse1.jpeg) -->
 ![Anthropic API Proxy (Repurposed)](images/langfuse2.jpeg)
 
 ## Quick Start ⚡
