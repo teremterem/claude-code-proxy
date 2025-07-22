@@ -97,15 +97,6 @@ This proxy works by:
 
 The proxy handles both streaming and non-streaming responses, maintaining full compatibility with all Claude clients while providing comprehensive prompt/response tracing through Langfuse. Custom streaming reconstruction ensures complete message capture for logging. 🌊
 
-## Langfuse Integration 📊
-
-All API interactions are automatically logged to Langfuse, providing:
-- Request/response tracking
-- Performance metrics
-- Usage analytics
-- Error monitoring
-- Token consumption tracking
-
 Configure your Langfuse credentials in the `.env` file to enable logging.
 
 ## Contributing 🤝
